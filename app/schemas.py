@@ -72,7 +72,7 @@ class BookUpdate(BaseModel):
     def reject_explicit_nulls(self) -> BookUpdate:
         for name in self.model_fields_set:
             if getattr(self, name) is None:
-                raise ValueError(f"{name} may not be null")
+                raise ValueError(f"{name} cannot not be null")
         return self
 
 
