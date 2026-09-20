@@ -2,7 +2,7 @@
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Book
@@ -58,13 +58,32 @@ def list_books(
     """
     query = select(Book)
     if q:
-        query = query.where(Book.title.icontains(q, autoescape=True))
+        query = query.where(
+            or_(
+                Book.title.icontains(q, autoescape=True),
+                Book.author.icontains(q, autoescape=True),
+            )
+        )
     if restricted is not None:
         query = query.where(Book.restricted == restricted)
-    # TODO: min_price / max_price filters
+    if min_price is not None:
+        query = query.where(Book.price_cents >= min_price)
+    if max_price is not None:
+        query = query.where(Book.price_cents <= max_price)
 
-    # TODO: apply ``sort``
-    books = db.scalars(query.order_by(Book.id.asc()).limit(limit).offset(offset)).all()
-    total = len(books)
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+
+    if sort == "title":
+        query = query.order_by(Book.title.asc(), Book.id.asc())
+    elif sort == "-title":
+        query = query.order_by(Book.title.desc(), Book.id.asc())
+    elif sort == "price":
+        query = query.order_by(Book.price_cents.asc(), Book.id.asc())
+    elif sort == "-price":
+        query = query.order_by(Book.price_cents.desc(), Book.id.asc())
+    else:
+        query = query.order_by(Book.id.asc())
+
+    books = list(db.scalars(query.limit(limit).offset(offset)).all())
 
     return BookPage(items=books, total=total, limit=limit, offset=offset)
