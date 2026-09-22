@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import Loan, MemberTier
@@ -21,12 +22,25 @@ LATE_FEE_PER_DAY_CENTS = 25
 
 def loan_status(loan: Loan, now: datetime) -> LoanStatus:
     """``returned`` if returned; else ``overdue`` if now > due_at; else ``active``."""
-    raise NotImplementedError("loan_status")
+    if loan.returned_at is not None:
+        return "returned"
+    if now > loan.due_at:
+        return "overdue"
+    return "active"
 
 
 def to_loan_out(loan: Loan, now: datetime) -> LoanOut:
     """Serialize a loan, computing its status at read time."""
-    raise NotImplementedError("to_loan_out")
+    return LoanOut(
+        id=loan.id,
+        member_id=loan.member_id,
+        book_id=loan.book_id,
+        borrowed_at=loan.borrowed_at,
+        due_at=loan.due_at,
+        returned_at=loan.returned_at,
+        late_fee_cents=loan.late_fee_cents,
+        status=loan_status(loan, now),
+    )
 
 
 def calculate_late_fee(due_at: datetime, returned_at: datetime, price_cents: int) -> int:
@@ -52,7 +66,10 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
 
 def get_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     """Return a loan by id, or raise 404."""
-    raise NotImplementedError("get_loan")
+    loan = db.get(Loan, loan_id)
+    if loan is None:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return to_loan_out(loan, now)
 
 
 def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
