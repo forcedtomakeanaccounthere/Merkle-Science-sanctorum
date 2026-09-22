@@ -122,6 +122,9 @@ def cancel_order(db: Session, order_id: int) -> Order:
     order = get_order(db, order_id)
     if order.status != OrderStatus.PENDING.value:
         raise HTTPException(status_code=409, detail=f"Cannot cancel an order that is {order.status}")
+    for item in order.items:
+        if item.book is not None:
+            item.book.stock += item.quantity
     order.status = OrderStatus.CANCELLED.value
     db.commit()
     db.refresh(order)
