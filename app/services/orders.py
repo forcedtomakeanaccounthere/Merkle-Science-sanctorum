@@ -23,7 +23,10 @@ BULK_DISCOUNT_PERCENT = 5
 
 def calculate_discount_percent(member: Member, total_quantity: int) -> int:
     """Tier discount, plus the bulk discount when total quantity >= threshold."""
-    raise NotImplementedError("calculate_discount_percent")
+    discount = TIER_DISCOUNT_PERCENT.get(member.tier, 0)
+    if total_quantity >= BULK_QUANTITY_THRESHOLD:
+        discount += BULK_DISCOUNT_PERCENT
+    return discount
 
 
 def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
