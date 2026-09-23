@@ -153,7 +153,24 @@ def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     Rules: 404 if missing; 409 if already returned. Sets returned_at = now, restores one copy
     of stock and charges a late fee (see ``calculate_late_fee``).
     """
-    raise NotImplementedError("return_loan")
+    loan = db.get(Loan, loan_id)
+    if loan is None:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    if loan.returned_at is not None:
+        raise HTTPException(status_code=409, detail="Loan has already been returned")
+
+    book = db.get(Book, loan.book_id)
+    price_cents = book.price_cents if book is not None else 0
+    if book is not None:
+        book.stock += 1
+
+    loan.returned_at = now
+    loan.late_fee_cents = calculate_late_fee(loan.due_at, now, price_cents)
+
+    db.commit()
+    db.refresh(loan)
+    return to_loan_out(loan, now)
 
 
 def list_member_loans(
