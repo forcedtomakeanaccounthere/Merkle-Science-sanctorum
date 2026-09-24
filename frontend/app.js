@@ -1410,6 +1410,7 @@ function initActions() {
       case 'order-cancel': cancelOrder(id, target); break;
       case 'close-order-detail': state.orderDetail = null; renderOrderDetail(); break;
       case 'refresh-orders': loadOrders(); break;
+      case 'loan-return': returnLoan(id, target); break;
       case 'refresh-loans': loadLoans(); break;
       case 'refresh-reports': loadReports(); break;
       case 'refresh-member': refreshMember(); break;
