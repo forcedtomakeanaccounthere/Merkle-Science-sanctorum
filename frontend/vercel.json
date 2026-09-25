@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/(books|members|orders|loans|reports|health)(.*)",
+      "destination": "https://Merkle-Science-sanctorum.onrender.com/$1$2"
+    },
+    {
+      "source": "/docs",
+      "destination": "https://Merkle-Science-sanctorum.onrender.com/docs"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "https://Merkle-Science-sanctorum.onrender.com/openapi.json"
+    }
+  ]
+}
