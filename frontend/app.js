@@ -349,6 +349,9 @@ const state = {
     items: [], total: 0, error: null, seq: 0, loaded: false,
   },
   editingBookId: null,
+  members: {
+    items: [], total: 0, limit: 20, offset: 0, error: null, seq: 0, loaded: false,
+  },
   orders: { items: [], error: null, loading: false, seq: 0 },
   orderDetail: null,     // { order, heading }
   loans: { items: [], error: null, loading: false, seq: 0 },
@@ -420,7 +423,7 @@ async function checkHealth() {
 const TAB_IDS = ['catalog', 'members', 'cart', 'loans', 'reports'];
 const loaders = {
   catalog: () => loadCatalog(),
-  members: () => { renderMemberCard(); loadStats(); },
+  members: () => { renderMemberCard(); loadStats(); loadMemberList(); },
   cart: () => { renderCart(); renderOrderDetail(); loadOrders(); },
   loans: () => loadLoans(),
   reports: () => loadReports(),
@@ -1251,6 +1254,108 @@ async function refreshMember() {
 }
 
 /* =========================================================================
+   Member List
+   ========================================================================= */
+
+async function loadMemberList() {
+  const m = state.members;
+  const seq = ++m.seq;
+  const table = $('#members-list-table');
+  if (!table) return;
+  table.setAttribute('aria-busy', 'true');
+  try {
+    const data = await api('/members', {
+      query: { limit: m.limit, offset: m.offset },
+      context: 'Loading members',
+    });
+    if (seq !== m.seq) return;
+    m.items = Array.isArray(data?.items) ? data.items : [];
+    m.total = Number.isFinite(data?.total) ? data.total : m.items.length;
+    if (Number.isFinite(data?.offset)) m.offset = data.offset;
+    m.error = null;
+    m.loaded = true;
+
+    // Landed past the last page: step back
+    if (!m.items.length && m.offset > 0 && m.total > 0) {
+      m.offset = Math.max(0, (Math.ceil(m.total / m.limit) - 1) * m.limit);
+      loadMemberList();
+      return;
+    }
+  } catch (err) {
+    if (seq !== m.seq) return;
+    m.items = [];
+    m.total = 0;
+    m.error = err;
+  } finally {
+    if (seq === m.seq) table.removeAttribute('aria-busy');
+  }
+  renderMemberList();
+}
+
+function memberRowHTML(member) {
+  const tierColors = {
+    apprentice: '#78716c',
+    adept: '#0891b2',
+    master: '#7c3aed',
+    supreme: '#dc2626',
+  };
+  const tierColor = tierColors[member.tier] || '#6b7280';
+  const tierDot = `<span class="tier-indicator" style="background-color: ${tierColor};" title="${esc(cap(member.tier))} tier"></span>`;
+  
+  return `<tr data-member-id="${member.id}">
+    <td>
+      <div class="member-cell">
+        <div class="avatar-sm" aria-hidden="true">${esc(initials(member.name))}</div>
+        <div>
+          <div class="member-cell-name">${esc(member.name)}</div>
+          <div class="member-cell-meta">${esc(member.email)}</div>
+        </div>
+      </div>
+    </td>
+    <td>${tierDot} ${esc(cap(member.tier))}</td>
+    <td class="num">${member.id}</td>
+    <td>${fmtDate(member.created_at, { dateOnly: true })}</td>
+    <td class="actions">
+      <button type="button" class="btn btn-primary btn-sm" data-action="sign-in-as" data-id="${member.id}" aria-label="Sign in as ${esc(member.name)}">
+        Sign in
+      </button>
+    </td>
+  </tr>`;
+}
+
+function renderMemberList() {
+  const m = state.members;
+  const tbody = $('#members-list-body');
+  if (!tbody) return;
+  
+  if (m.error) {
+    tbody.innerHTML = `<tr><td colspan="5">${inlineErrorHTML(m.error, 'the member list')}</td></tr>`;
+  } else if (!m.items.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">No members found. Create the first member above.</td></tr>`;
+  } else {
+    tbody.innerHTML = m.items.map(memberRowHTML).join('');
+  }
+
+  const info = $('#members-page-info');
+  const prev = $('[data-action="members-page-prev"]');
+  const next = $('[data-action="members-page-next"]');
+  
+  if (m.error || !m.items.length) {
+    if (info) info.textContent = m.error ? '' : '0 members';
+    if (prev) prev.disabled = m.error ? true : m.offset <= 0;
+    if (next) next.disabled = true;
+  } else {
+    const from = m.offset + 1;
+    const to = m.offset + m.items.length;
+    const pages = Math.max(1, Math.ceil(m.total / m.limit));
+    const page = Math.floor(m.offset / m.limit) + 1;
+    if (info) info.textContent = `Showing ${from}–${to} of ${m.total} · Page ${page} of ${pages}`;
+    if (prev) prev.disabled = m.offset <= 0;
+    if (next) next.disabled = m.offset + m.limit >= m.total;
+  }
+}
+
+/* =========================================================================
    Loans
    ========================================================================= */
 
@@ -1395,6 +1500,24 @@ function initActions() {
       case 'page-next':
         state.catalog.offset += state.catalog.limit;
         state.editingBookId = null; loadCatalog(); break;
+      case 'members-page-prev':
+        state.members.offset = Math.max(0, state.members.offset - state.members.limit);
+        loadMemberList(); break;
+      case 'members-page-next':
+        state.members.offset += state.members.limit;
+        loadMemberList(); break;
+      case 'sign-in-as': {
+        const member = state.members.items.find((m) => m.id === id);
+        if (member) {
+          setMember(member.id, member);
+          toast({ type: 'success', title: `Signed in as ${member.name}`, message: `${cap(member.tier)} member #${member.id}` });
+          loadStats();
+          // Scroll to top of page to see current member card
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        break;
+      }
+      case 'refresh-member-list': loadMemberList(); break;
       case 'edit-book': startBookEdit(id); break;
       case 'cancel-edit': cancelBookEdit(); break;
       case 'save-book': saveBookEdit(id); break;

@@ -276,8 +276,16 @@ input::placeholder { color: #9a9eaa; }
   flex: none; width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
   background: var(--navy-800); color: var(--amber-300); font-family: var(--font-serif); font-size: 1.15rem;
 }
+.avatar-sm {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--navy-800); color: var(--amber-300); font-family: var(--font-serif); font-size: .9rem;
+}
 .member-name { font-size: 1.15rem; font-weight: 650; }
 .member-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .85rem; color: var(--muted); }
+.member-cell { display: flex; align-items: center; gap: 12px; }
+.member-cell-name { font-weight: 600; }
+.member-cell-meta { font-size: .83rem; color: var(--muted); }
+.tier-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
 .perks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
 .perks div { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; }
 .perks dt { font-size: .74rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }

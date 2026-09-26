@@ -218,6 +218,37 @@
           </div>
         </div>
       </div>
+
+      <div class="card card-flush">
+        <div class="card-head">
+          <h2 class="card-title">All members</h2>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="refresh-member-list">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table id="members-list-table" class="table">
+            <caption class="sr-only">All members</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Tier</th>
+                <th scope="col" class="num">ID</th>
+                <th scope="col">Joined</th>
+                <th scope="col" class="actions-col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="members-list-body">
+              <tr><td colspan="5" class="empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" aria-label="Member pagination">
+          <p id="members-page-info" class="muted" aria-live="polite"></p>
+          <div class="btn-group">
+            <button type="button" class="btn btn-secondary btn-sm" data-action="members-page-prev" disabled>Previous</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-action="members-page-next" disabled>Next</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ========================= CART & ORDERS ========================= -->
