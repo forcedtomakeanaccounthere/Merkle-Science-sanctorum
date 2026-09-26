@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Book, Member, MemberTier, Order, OrderItem, OrderStatus
@@ -39,14 +40,22 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
     3. 409 any book has insufficient stock (all-or-nothing: nothing is changed)
     Then stock is decremented for every item and prices are snapshotted.
     Pricing: discount_cents = subtotal * percent // 100; total = subtotal - discount.
+    
+    Uses SELECT FOR UPDATE to lock book rows and prevent concurrent order race conditions.
     """
     member = db.get(Member, data.member_id)
     if member is None:
         raise HTTPException(status_code=404, detail="Member not found")
 
+    # Lock book rows in consistent order (by id) to prevent deadlocks
+    book_ids = sorted([item.book_id for item in data.items])
+    books_query = select(Book).where(Book.id.in_(book_ids)).order_by(Book.id).with_for_update()
+    locked_books = {book.id: book for book in db.scalars(books_query)}
+
+    # Verify all books exist (maintain original order for error messages)
     books = []
     for item in data.items:
-        book = db.get(Book, item.book_id)
+        book = locked_books.get(item.book_id)
         if book is None:
             raise HTTPException(status_code=404, detail=f"Book with id {item.book_id} not found")
         books.append(book)
