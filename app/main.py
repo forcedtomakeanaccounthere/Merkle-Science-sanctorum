@@ -1,28 +1,41 @@
 """Application factory for the Sanctum Sanctorum Bookstore API."""
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import sleep
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  (registers tables on Base.metadata)
 from app.clock import get_now
-from app.db import Base, SessionLocal, engine
+from app.db import Base, SessionLocal, engine, get_db
 from app.routers import books, loans, members, orders, reports
 from app.schemas import HealthOut
 from app.seed import seed_if_empty
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+DATABASE_STARTUP_ATTEMPTS = 4
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Create tables on the default engine and load demo data into an empty database."""
-    Base.metadata.create_all(engine)
-    with SessionLocal() as db:
-        seed_if_empty(db, get_now())
+    for attempt in range(DATABASE_STARTUP_ATTEMPTS):
+        try:
+            Base.metadata.create_all(engine)
+            with SessionLocal() as db:
+                seed_if_empty(db, get_now())
+            break
+        except SQLAlchemyError:
+            engine.dispose()
+            if attempt == DATABASE_STARTUP_ATTEMPTS - 1:
+                raise
+            sleep(2**attempt)
     yield
 
 
@@ -46,6 +59,14 @@ def create_app(init_db: bool = True) -> FastAPI:
 
     @application.get("/health", response_model=HealthOut, tags=["health"])
     def health():
+        return {"status": "ok"}
+
+    @application.get("/health/db", response_model=HealthOut, tags=["health"])
+    def database_health(db: Session = Depends(get_db)):
+        try:
+            db.execute(text("SELECT 1"))
+        except SQLAlchemyError as exc:
+            raise HTTPException(status_code=503, detail="Database unavailable") from exc
         return {"status": "ok"}
 
     application.include_router(books.router)

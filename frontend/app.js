@@ -208,12 +208,21 @@ async function api(path, { method = 'GET', body, query, context = '', toast: not
   }
 
   let res;
-  try {
-    res = await fetch(url, init);
-  } catch {
-    const err = new ApiError(0, 'Could not reach the server. Check that the API is running.');
-    if (notify) notifyApiError(err, context);
-    throw err;
+  const retryable = method === 'GET';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      res = await fetch(url, init);
+    } catch {
+      if (!retryable || attempt === 2) {
+        const err = new ApiError(0, 'Could not reach the server. Check that the API is running.');
+        if (notify) notifyApiError(err, context);
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      continue;
+    }
+    if (res.ok || !retryable || ![500, 502, 503, 504].includes(res.status) || attempt === 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
   }
 
   let text = '';
