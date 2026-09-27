@@ -163,3 +163,161 @@ class TestMemberStats:
 
     def test_stats_for_missing_member_returns_404(self, client):
         assert client.get("/members/9999/stats").status_code == 404
+
+
+class TestListMembers:
+    """Tests for GET /members endpoint with pagination."""
+
+    def test_list_members_returns_paginated_results(self, client, make_member):
+        """Basic pagination test."""
+        members = [make_member() for _ in range(5)]
+        
+        response = client.get("/members?limit=20&offset=0")
+        assert response.status_code == 200
+        body = response.json()
+        
+        assert "items" in body
+        assert "total" in body
+        assert "limit" in body
+        assert "offset" in body
+        assert body["limit"] == 20
+        assert body["offset"] == 0
+        assert body["total"] >= 5
+        assert len(body["items"]) >= 5
+
+    def test_list_members_default_pagination(self, client, make_member):
+        """Test default limit and offset values."""
+        make_member()
+        
+        response = client.get("/members")
+        assert response.status_code == 200
+        body = response.json()
+        
+        assert body["limit"] == 20
+        assert body["offset"] == 0
+
+    def test_list_members_with_custom_limit(self, client, make_member):
+        """Test custom limit parameter."""
+        for _ in range(5):
+            make_member()
+        
+        response = client.get("/members?limit=3")
+        assert response.status_code == 200
+        body = response.json()
+        
+        assert body["limit"] == 3
+        assert len(body["items"]) <= 3
+
+    def test_list_members_with_offset(self, client, make_member):
+        """Test offset parameter for pagination."""
+        members = [make_member() for _ in range(5)]
+        member_ids = [m["id"] for m in members]
+        
+        # Get first page
+        response1 = client.get("/members?limit=2&offset=0")
+        page1 = response1.json()
+        
+        # Get second page
+        response2 = client.get("/members?limit=2&offset=2")
+        page2 = response2.json()
+        
+        # Items should be different
+        page1_ids = [m["id"] for m in page1["items"]]
+        page2_ids = [m["id"] for m in page2["items"]]
+        
+        # No overlap between pages
+        assert not set(page1_ids) & set(page2_ids)
+
+    def test_list_members_ordered_by_id(self, client, make_member):
+        """Members should be ordered by id (creation order)."""
+        members = [make_member() for _ in range(3)]
+        
+        response = client.get("/members?limit=100")
+        body = response.json()
+        
+        # Find our test members in the response
+        our_members = [m for m in body["items"] if m["id"] in [mem["id"] for mem in members]]
+        ids = [m["id"] for m in our_members]
+        
+        # Should be in ascending order
+        assert ids == sorted(ids)
+
+    def test_list_members_total_count(self, client, make_member):
+        """Total should reflect the total count regardless of pagination."""
+        # Get initial count
+        initial_response = client.get("/members")
+        initial_total = initial_response.json()["total"]
+        
+        # Add 3 more members
+        for _ in range(3):
+            make_member()
+        
+        response = client.get("/members?limit=1")
+        body = response.json()
+        
+        assert body["total"] == initial_total + 3
+        assert len(body["items"]) == 1
+
+    def test_list_members_empty_database(self, client):
+        """Listing members when none exist should return empty list."""
+        response = client.get("/members")
+        assert response.status_code == 200
+        body = response.json()
+        
+        # Might have members from other tests, but structure should be correct
+        assert "items" in body
+        assert isinstance(body["items"], list)
+        assert body["total"] >= 0
+
+    def test_list_members_limit_validation(self, client):
+        """Test limit parameter validation."""
+        # Limit below minimum
+        response = client.get("/members?limit=0")
+        assert response.status_code == 422
+        
+        # Limit above maximum
+        response = client.get("/members?limit=101")
+        assert response.status_code == 422
+        
+        # Valid limits
+        assert client.get("/members?limit=1").status_code == 200
+        assert client.get("/members?limit=100").status_code == 200
+
+    def test_list_members_offset_validation(self, client):
+        """Test offset parameter validation."""
+        # Negative offset
+        response = client.get("/members?offset=-1")
+        assert response.status_code == 422
+        
+        # Valid offset
+        assert client.get("/members?offset=0").status_code == 200
+        assert client.get("/members?offset=100").status_code == 200
+
+    def test_list_members_beyond_available_items(self, client, make_member):
+        """Requesting offset beyond available items returns empty list."""
+        make_member()
+        
+        response = client.get("/members?offset=1000")
+        assert response.status_code == 200
+        body = response.json()
+        
+        # Should return empty items but correct total
+        assert body["total"] >= 1
+        assert len(body["items"]) == 0
+
+    def test_list_members_includes_all_fields(self, client, make_member):
+        """Each member in the list should include all required fields."""
+        member = make_member(name="Test Member", tier="master")
+        
+        response = client.get("/members")
+        assert response.status_code == 200
+        
+        items = response.json()["items"]
+        our_member = next((m for m in items if m["id"] == member["id"]), None)
+        
+        assert our_member is not None
+        assert our_member["id"] == member["id"]
+        assert our_member["name"] == "Test Member"
+        assert our_member["email"] == member["email"]
+        assert our_member["tier"] == "master"
+        assert "created_at" in our_member

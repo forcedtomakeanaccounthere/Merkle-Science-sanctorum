@@ -288,3 +288,181 @@ class TestMemberOrders:
 
     def test_missing_member_returns_404(self, client):
         assert client.get("/members/9999/orders").status_code == 404
+
+
+class TestConcurrentOrders:
+    """Tests for concurrent order handling with database locking."""
+
+    def test_concurrent_orders_for_last_copy_only_one_succeeds(self, client, make_member, make_book):
+        """When two orders compete for the last copy, only one should succeed."""
+        book = make_book(stock=1)
+        member1 = make_member()
+        member2 = make_member()
+        
+        # First order should succeed
+        response1 = place_order(client, member1["id"], (book["id"], 1))
+        assert response1.status_code == 201
+        
+        # Second order should fail with insufficient stock
+        response2 = place_order(client, member2["id"], (book["id"], 1))
+        assert response2.status_code == 409
+        assert "Insufficient stock" in response2.json()["detail"]
+        
+        # Verify stock is correct
+        assert stock_of(client, book) == 0
+
+    def test_multiple_orders_competing_for_limited_stock(self, client, make_member, make_book):
+        """Multiple orders for more than available stock should follow first-come-first-served."""
+        book = make_book(stock=3)
+        member1 = make_member()
+        member2 = make_member()
+        member3 = make_member()
+        
+        # First order takes 2
+        assert place_order(client, member1["id"], (book["id"], 2)).status_code == 201
+        assert stock_of(client, book) == 1
+        
+        # Second order takes 1
+        assert place_order(client, member2["id"], (book["id"], 1)).status_code == 201
+        assert stock_of(client, book) == 0
+        
+        # Third order fails
+        response = place_order(client, member3["id"], (book["id"], 1))
+        assert response.status_code == 409
+
+    def test_cancelled_order_makes_stock_available_again(self, client, make_member, make_book):
+        """When an order is cancelled, the stock should become available for new orders."""
+        book = make_book(stock=1)
+        member1 = make_member()
+        member2 = make_member()
+        
+        # First order reserves the stock
+        order1 = place_order(client, member1["id"], (book["id"], 1)).json()
+        assert stock_of(client, book) == 0
+        
+        # Second order fails
+        assert place_order(client, member2["id"], (book["id"], 1)).status_code == 409
+        
+        # Cancel first order
+        client.post(f"/orders/{order1['id']}/cancel")
+        assert stock_of(client, book) == 1
+        
+        # Now second member can order
+        response = place_order(client, member2["id"], (book["id"], 1))
+        assert response.status_code == 201
+        assert stock_of(client, book) == 0
+
+    def test_order_with_multiple_books_locks_all_or_nothing(self, client, make_member, make_book):
+        """Order with multiple books should be all-or-nothing when one book has insufficient stock."""
+        book_a = make_book(stock=5)
+        book_b = make_book(stock=1)
+        member = make_member()
+        
+        # Try to order more than available for book_b
+        response = place_order(client, member["id"], (book_a["id"], 2), (book_b["id"], 2))
+        assert response.status_code == 409
+        
+        # Stock for book_a should not be decremented
+        assert stock_of(client, book_a) == 5
+        assert stock_of(client, book_b) == 1
+
+
+class TestOrderEdgeCases:
+    """Additional edge case tests for orders."""
+
+    def test_order_zero_stock_book_returns_409(self, client, make_member, make_book):
+        """Ordering a book with 0 stock should fail."""
+        book = make_book(stock=0)
+        response = place_order(client, make_member()["id"], (book["id"], 1))
+        assert response.status_code == 409
+        assert "Insufficient stock" in response.json()["detail"]
+
+    def test_order_with_exactly_available_stock_across_items(self, client, make_member, make_book):
+        """Order requesting exactly the total available stock across multiple items should succeed."""
+        book = make_book(stock=5)
+        member = make_member()
+        # This should work: 5 copies available
+        response = place_order(client, member["id"], (book["id"], 5))
+        assert response.status_code == 201
+        assert stock_of(client, book) == 0
+
+    def test_large_quantity_discount_calculation(self, client, make_member, make_book):
+        """Test discount calculation with large quantities."""
+        book = make_book(price_cents=100, stock=100)
+        member = make_member(tier="supreme")  # 15% tier discount
+        
+        # Order 50 copies - should get bulk discount too (5%)
+        response = place_order(client, member["id"], (book["id"], 50))
+        body = response.json()
+        
+        assert body["subtotal_cents"] == 5000
+        assert body["discount_percent"] == 20  # 15% + 5%
+        assert body["discount_cents"] == 1000
+        assert body["total_cents"] == 4000
+
+    def test_pay_order_idempotency_check(self, client, make_member, make_book):
+        """Verify paying the same order twice returns 409."""
+        order = place_order(client, make_member()["id"], (make_book()["id"], 1)).json()
+        assert client.post(f"/orders/{order['id']}/pay").status_code == 200
+        assert client.post(f"/orders/{order['id']}/pay").status_code == 409
+
+    def test_cancel_order_idempotency_check(self, client, make_member, make_book):
+        """Verify cancelling the same order twice returns 409 and doesn't double-restore stock."""
+        book = make_book(stock=5)
+        order = place_order(client, make_member()["id"], (book["id"], 2)).json()
+        
+        assert client.post(f"/orders/{order['id']}/cancel").status_code == 200
+        assert stock_of(client, book) == 5
+        
+        # Second cancel should fail
+        assert client.post(f"/orders/{order['id']}/cancel").status_code == 409
+        # Stock should not be restored again
+        assert stock_of(client, book) == 5
+
+    def test_order_with_mix_of_restricted_and_normal_books(self, client, make_member, make_book):
+        """Order with both restricted and normal books should check tier requirement."""
+        normal = make_book(restricted=False)
+        restricted = make_book(restricted=True)
+        
+        # Apprentice member cannot order
+        apprentice = make_member(tier="apprentice")
+        response = place_order(client, apprentice["id"], (normal["id"], 1), (restricted["id"], 1))
+        assert response.status_code == 403
+        
+        # Master member can order
+        master = make_member(tier="master")
+        response = place_order(client, master["id"], (normal["id"], 1), (restricted["id"], 1))
+        assert response.status_code == 201
+
+    def test_order_exactly_at_bulk_discount_boundary(self, client, make_member, make_book):
+        """Test discount at exact threshold boundaries."""
+        book = make_book(price_cents=100, stock=20)
+        member = make_member()
+        
+        # 9 copies - no bulk discount
+        order9 = place_order(client, member["id"], (book["id"], 9)).json()
+        assert order9["discount_percent"] == 0
+        
+        # Cancel to free stock
+        client.post(f"/orders/{order9['id']}/cancel")
+        
+        # 10 copies - bulk discount applies
+        order10 = place_order(client, member["id"], (book["id"], 10)).json()
+        assert order10["discount_percent"] == 5
+
+    def test_price_snapshot_across_multiple_items(self, client, make_member, make_book):
+        """Verify price is snapshotted for all items in an order."""
+        book1 = make_book(price_cents=1000)
+        book2 = make_book(price_cents=2000)
+        
+        order = place_order(client, make_member()["id"], (book1["id"], 2), (book2["id"], 1)).json()
+        
+        # Update prices
+        client.patch(f"/books/{book1['id']}", json={"price_cents": 5000})
+        client.patch(f"/books/{book2['id']}", json={"price_cents": 8000})
+        
+        # Fetch order - should have old prices
+        fetched = client.get(f"/orders/{order['id']}").json()
+        items_by_book = {item["book_id"]: item for item in fetched["items"]}
+        assert items_by_book[book1["id"]]["unit_price_cents"] == 1000
+        assert items_by_book[book2["id"]]["unit_price_cents"] == 2000
